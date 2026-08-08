@@ -1,0 +1,48 @@
+name: Cleanup Old Artifacts
+
+on:
+  schedule:
+    - cron: '0 0 * * *'
+  workflow_run:
+    workflows: ["*"]
+    types:
+      - completed
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete old artifacts (keep newest only)
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const artifacts = await github.paginate(github.rest.actions.listArtifactsForRepo, {
+              owner,
+              repo,
+              per_page: 100
+            });
+            if (artifacts.length === 0) {
+              core.info('No artifacts found.');
+              return;
+            }
+            const byName = {};
+            for (const a of artifacts) {
+              if (!byName[a.name]) byName[a.name] = [];
+              byName[a.name].push(a);
+            }
+            let deleted = 0;
+            for (const [name, items] of Object.entries(byName)) {
+              items.sort((x, y) => new Date(y.created_at) - new Date(x.created_at));
+              for (let i = 1; i < items.length; i++) {
+                core.info(`Deleting ${items[i].name} (id:${items[i].id})`);
+                await github.rest.actions.deleteArtifact({ owner, repo, artifact_id: items[i].id });
+                deleted++;
+              }
+            }
+            core.info(`Deleted ${deleted}, kept ${Object.keys(byName).length} newest.`);
